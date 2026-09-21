@@ -15,17 +15,15 @@ import (
 	"github.com/srex-run/access-gateway/internal/gateway"
 	"github.com/srex-run/access-gateway/internal/iam"
 	"github.com/srex-run/access-gateway/internal/id"
-	"github.com/srex-run/access-gateway/internal/label"
-	"github.com/srex-run/access-gateway/internal/repository"
 	"github.com/srex-run/access-gateway/internal/service"
 )
 
-func TestForceCloseOpenSessionsAndPlatformAdminPermission(t *testing.T) {
+func TestForceCloseOpenSessionsAndAuthorizedRolePermissions(t *testing.T) {
 	database := openDatabase(t)
 	ctx := context.Background()
 	repos := newRepositories()
 	users := make([]domain.User, 7)
-	for index, name := range []string{"Bootstrap admin", "Assigned admin", "Security admin", "SRE", "Legacy custom override", "Disabled admin", "Applicant"} {
+	for index, name := range []string{"Bootstrap admin", "Assigned admin", "Auditor", "Asset operator", "Custom recovery operator", "Disabled admin", "Applicant"} {
 		status := domain.UserStatusActive
 		if index == 5 {
 			status = domain.UserStatusInactive
@@ -45,11 +43,17 @@ func TestForceCloseOpenSessionsAndPlatformAdminPermission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Existing custom grants must not retain this administrator-only capability.
-	if _, err := (repository.IAMRepository{}).SaveRole(ctx, database, iam.Role{Name: "legacy-override", Enabled: true, Labels: label.Labels{}, Permissions: []authz.Permission{authz.PermissionSessionOverride, authz.PermissionAuditRead}}); err != nil {
-		t.Fatal(err)
+	// Force-close is an explicit permission: role names and unrelated admin
+	// capabilities must neither grant it nor block an authorized custom role.
+	for _, role := range []iam.Role{
+		{Name: "asset-operator", Enabled: true, Permissions: []authz.Permission{authz.PermissionCatalogManage}},
+		{Name: "recovery-operator", Enabled: true, Permissions: []authz.Permission{authz.PermissionSessionOverride}},
+	} {
+		if _, err := svc.SaveIAMRole(ctx, users[0].ID, role); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for index, role := range []string{"admin", "security_admin", "sre", "legacy-override", "admin"} {
+	for index, role := range []string{"admin", "auditor", "asset-operator", "recovery-operator", "admin"} {
 		if _, err := svc.GrantRole(ctx, users[0].ID, service.GrantRoleInput{UserID: users[index+1].ID, Role: role}); err != nil {
 			t.Fatal(err)
 		}
@@ -111,7 +115,7 @@ func TestForceCloseOpenSessionsAndPlatformAdminPermission(t *testing.T) {
 	if found, err := svc.ListSessionRecords(ctx, users[0].ID, domain.SessionRecordFilter{Status: "open", Search: sessions[5].ID, Limit: 50}); err != nil || len(found) != 0 {
 		t.Fatalf("search selected a closed session: %+v %v", found, err)
 	}
-	for _, user := range users[2:] {
+	for _, user := range []domain.User{users[2], users[3], users[5], users[6]} {
 		if _, err := svc.ForceCloseSession(ctx, user.ID, sessions[0].ID, "Unauthorized reclaim"); !errors.Is(err, service.ErrForbidden) {
 			t.Fatalf("%s force-close error: %v", user.Nickname, err)
 		}
@@ -124,7 +128,7 @@ func TestForceCloseOpenSessionsAndPlatformAdminPermission(t *testing.T) {
 			t.Fatalf("%s should not see force-close: %v %v", user.Nickname, permissions, err)
 		}
 	}
-	for _, user := range users[:2] {
+	for _, user := range []domain.User{users[0], users[1], users[4]} {
 		permissions, err := svc.EffectivePermissions(ctx, user.ID)
 		if err != nil || !slices.Contains(permissions, authz.PermissionSessionOverride) {
 			t.Fatalf("%s missing force-close permission: %v %v", user.Nickname, permissions, err)

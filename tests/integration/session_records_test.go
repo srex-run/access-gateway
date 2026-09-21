@@ -16,6 +16,7 @@ import (
 	"github.com/srex-run/access-gateway/internal/domain"
 	"github.com/srex-run/access-gateway/internal/gateway"
 	"github.com/srex-run/access-gateway/internal/id"
+	"github.com/srex-run/access-gateway/internal/operationaudit"
 	"github.com/srex-run/access-gateway/internal/repository"
 	"github.com/srex-run/access-gateway/internal/service"
 )
@@ -76,7 +77,7 @@ func TestSessionRecordsVisibilityAndTrace(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		session, err := repos.sessions.Create(ctx, database, domain.Session{ID: id.New(), RequestID: request.ID, GatewayID: gw.ID, Status: domain.SessionProvisioning, ConnectionMode: gateway.ConnectionModeAudit})
+		session, err := repos.sessions.Create(ctx, database, domain.Session{ID: id.New(), RequestID: request.ID, GatewayID: gw.ID, Status: domain.SessionProvisioning, ConnectionMode: gateway.ConnectionModeAudit, AuditPolicy: operationaudit.Policy{Profile: "mysql", Revision: strings.Repeat("a", 64), Protocol: "mysql"}})
 		if err != nil {
 			t.Fatal(err)
 		}

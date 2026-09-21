@@ -149,7 +149,7 @@ jobs:
             --mount "type=bind,source=$RUNNER_TEMP/terminalclient.test,target=/terminalclient.test,readonly" \
             -e RUN_TERMINAL_SANDBOX_TESTS=1 --entrypoint /terminalclient.test \
             "kuzane/access-gateway:sha-${{ github.sha }}" -test.v -test.timeout=60s
-      - uses: aquasecurity/trivy-action@6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5 # v0.30.0
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: kuzane/access-gateway:sha-${{ github.sha }}
           format: table

@@ -58,10 +58,10 @@ func scanAssetPolicy(s RowScanner) (approvalflow.AssetPolicy, error) {
 	var v approvalflow.AssetPolicy
 	var labels []byte
 	err := s.Scan(
-		&v.AssetID,   // asset_id
-		&labels,      // labels
-		&v.Revision,  // revision
-		&v.UpdatedAt, // updated_at
+		&v.AssetID,      // asset_id
+		&labels,         // labels
+		&v.Revision,     // revision
+		&v.UpdatedAt,    // updated_at
 		&v.DefaultsOnly, // defaults_only
 	)
 	if err != nil {

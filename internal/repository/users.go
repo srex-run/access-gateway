@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -20,12 +21,19 @@ func (r *UserRepository) Create(ctx context.Context, q DBTX, value domain.User) 
 	if value.Username == "" {
 		value.Username = security.ExternalUsername("", "", "user", value.ID)
 	}
+	if value.Labels == nil {
+		value.Labels = map[string]string{}
+	}
+	labels, err := json.Marshal(value.Labels)
+	if err != nil {
+		return domain.User{}, opError("encode user labels", err)
+	}
 	const query = `INSERT INTO users
-        (id, feishu_open_id, feishu_union_id, username, nickname, email, department, status)
-        VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8)
+        (id, feishu_open_id, feishu_union_id, username, nickname, email, department, status, labels)
+        VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT DO NOTHING RETURNING ` + userColumns
 	created, err := scanUser(q.QueryRowContext(ctx, query, value.ID, value.FeishuOpenID, value.FeishuUnionID,
-		value.Username, strings.TrimSpace(value.Nickname), value.Email, value.Department, value.Status))
+		value.Username, strings.TrimSpace(value.Nickname), value.Email, value.Department, value.Status, labels))
 	if errors.Is(err, ErrNotFound) {
 		err = ErrConflict
 	}
@@ -74,8 +82,8 @@ func (r *UserRepository) UpsertByFeishu(ctx context.Context, q DBTX, value domai
 func (r *UserRepository) updateFeishuProfile(ctx context.Context, q DBTX, value domain.User) (domain.User, error) {
 	const query = `UPDATE users SET
         feishu_union_id=$2, nickname=COALESCE(NULLIF(btrim($3), ''), username), email=$4, department=$5,
-        status=CASE WHEN status='inactive' THEN status ELSE $6 END,
-        auth_version=auth_version+CASE WHEN status<>$6 AND $6='inactive' THEN 1 ELSE 0 END,
+        status=CASE WHEN status='inactive' THEN status ELSE $6::varchar END,
+        auth_version=auth_version+CASE WHEN status<>$6::varchar AND $6::varchar='inactive' THEN 1 ELSE 0 END,
         revision=revision+1, updated_at=NOW()
         WHERE feishu_open_id=$1 RETURNING ` + userColumns
 	updated, err := scanUser(q.QueryRowContext(ctx, query, value.FeishuOpenID, value.FeishuUnionID,
@@ -120,7 +128,7 @@ func (r *UserRepository) GetByFeishuUnionID(ctx context.Context, q DBTX, unionID
 }
 
 func (r *UserRepository) UpdateStatus(ctx context.Context, q DBTX, id string, status domain.UserStatus) error {
-	const query = `UPDATE users SET status = $2, auth_version = auth_version + CASE WHEN status <> $2 THEN 1 ELSE 0 END, revision = revision + 1, updated_at = NOW() WHERE id = $1`
+	const query = `UPDATE users SET status = $2::varchar, auth_version = auth_version + CASE WHEN status <> $2::varchar THEN 1 ELSE 0 END, revision = revision + 1, updated_at = NOW() WHERE id = $1`
 	result, err := q.ExecContext(ctx, query, id, status)
 	if err != nil {
 		return opError("update user status", err)

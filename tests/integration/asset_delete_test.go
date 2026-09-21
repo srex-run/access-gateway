@@ -102,8 +102,8 @@ func TestAssetDeletionPreservesHistoryAndRevokesSessions(t *testing.T) {
 	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE asset_id=$1 AND event_type='asset.deleted'`, asset.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("delete audit count=%d err=%v", count, err)
 	}
-	source, externalID := "cmdb.test", "instance-1"
-	asset.ID, asset.ExternalSource, asset.ExternalID = id.New(), &source, &externalID
+	source, externalID, generation := "cmdb.test", "instance-1", id.New()
+	asset.ID, asset.ExternalSource, asset.ExternalID, asset.SyncGeneration = id.New(), &source, &externalID, &generation
 	external, err := repos.assets.UpsertExternal(ctx, database, asset)
 	if err != nil {
 		t.Fatal(err)

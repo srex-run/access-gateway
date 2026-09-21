@@ -1114,9 +1114,20 @@ func TestDirectAccessEvidenceAgainstPostgres(t *testing.T) {
 	}
 	invalidOperation := operation
 	invalidOperation.EventID = id.New()
-	invalidOperation.Protocol = "http"
+	invalidOperation.Protocol = "unsupported"
 	if _, err := evidence.AppendOperationEvent(ctx, database, invalidOperation); !errors.Is(err, ErrConstraint) {
 		t.Fatalf("operation check-constraint error = %v", err)
+	}
+	httpOperation := operation
+	httpOperation.EventID = id.New()
+	httpOperation.Protocol = "http"
+	httpOperation.OperationType = "request"
+	httpOperation.SourceRecordID = "http:evidence:1"
+	if inserted, err := evidence.AppendOperationEvent(ctx, database, httpOperation); err != nil || !inserted {
+		t.Fatalf("append HTTP operation event: inserted=%v err=%v", inserted, err)
+	}
+	if stored, err := evidence.GetOperationEvent(ctx, database, httpOperation.EventID); err != nil || stored.Protocol != "http" {
+		t.Fatalf("read HTTP operation event: value=%+v err=%v", stored, err)
 	}
 	if _, err := database.ExecContext(ctx, `UPDATE gateway_connection_events SET result = 'tampered' WHERE event_id = $1`, connectionEventID); err == nil {
 		t.Fatal("connection evidence update unexpectedly succeeded")

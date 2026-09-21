@@ -25,6 +25,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/srex-run/access-gateway/internal/approvalflow"
 	"github.com/srex-run/access-gateway/internal/config"
 	"github.com/srex-run/access-gateway/internal/domain"
 	"github.com/srex-run/access-gateway/internal/gateway"
@@ -99,7 +100,8 @@ func TestHTTPMainFlowThroughWorkerAndGatewayAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	components := newHTTPFlowComponents(t, ctx, database, cfg, gatewayClient)
+	runtimeClient := &httpFlowSessionRuntime{HTTPClient: gatewayClient, endpoint: gatewayProxy.URL}
+	components := newHTTPFlowComponents(t, ctx, database, cfg, runtimeClient)
 
 	settingsConfig := settings.Defaults()
 	settingsConfig.ClientAccessEnabled, settingsConfig.ClientAccessHost = true, "gateway.test"
@@ -116,7 +118,7 @@ func TestHTTPMainFlowThroughWorkerAndGatewayAgent(t *testing.T) {
 	components.HTTP.FrontendRedirect = "/console"
 	controlPlane.Config.Handler = components.HTTP.Container()
 	controlPlane.Start()
-	secondComponents := newHTTPFlowComponents(t, ctx, database, cfg, gatewayClient)
+	secondComponents := newHTTPFlowComponents(t, ctx, database, cfg, runtimeClient)
 	secondComponents.HTTP.FrontendRedirect = "/console"
 	secondControlPlane := httptest.NewServer(secondComponents.HTTP.Container())
 	t.Cleanup(secondControlPlane.Close)
@@ -167,9 +169,17 @@ func TestHTTPMainFlowThroughWorkerAndGatewayAgent(t *testing.T) {
 	assertHTTPStatus(t, gatewayResult, http.StatusCreated)
 	gatewayRecord := decodeHTTPFlowResponse[httpFlowGateway](t, gatewayResult.body)
 
+	workflowResult := performJSONRequest(t, plainClient, http.MethodPost, controlPlane.URL+"/api/v1/admin/workflows", admin.ID, approvalflow.Definition{
+		Name: "HTTP Flow Approval", Enabled: true, TimeoutSeconds: 600,
+		Steps: []approvalflow.Step{{Name: "Technical owner", Kind: "role_selector", Mode: "any", Selector: "access-gateway.io/role=http-approver"}},
+	}, nil)
+	assertHTTPStatus(t, workflowResult, http.StatusOK)
+	workflow := decodeHTTPFlowResponse[approvalflow.Definition](t, workflowResult.body)
+
 	assetResult := performJSONRequest(t, plainClient, http.MethodPost, controlPlane.URL+"/api/v1/admin/assets", admin.ID, map[string]any{
 		"region_id": region.ID, "gateway_id": gatewayRecord.ID, "name": "HTTP Flow Database", "asset_type": "postgres",
 		"target": httpFlowTarget, "risk_level": "sensitive", "max_ttl_seconds": 300, "status": "enabled",
+		"approval_workflow_id": workflow.ID,
 	}, nil)
 	assertHTTPStatus(t, assetResult, http.StatusCreated)
 	asset := decodeHTTPFlowResponse[httpFlowAsset](t, assetResult.body)
@@ -211,11 +221,6 @@ func TestHTTPMainFlowThroughWorkerAndGatewayAgent(t *testing.T) {
 		"user_id": approver.ID, "role": "http-approver",
 	}, nil)
 	assertHTTPStatus(t, grantResult, http.StatusCreated)
-	approverResult := performJSONRequest(t, plainClient, http.MethodPost, controlPlane.URL+"/api/v1/admin/assets/"+asset.ID+"/approvers", admin.ID, map[string]any{
-		"user_id": approver.ID, "approval_level": 1, "role": "technical_owner",
-	}, nil)
-	assertHTTPStatus(t, approverResult, http.StatusCreated)
-
 	catalogResult := performHTTPRequest(t, plainClient, http.MethodGet, controlPlane.URL+"/api/v1/admin/gateways/"+gatewayRecord.ID+"/catalog", admin.ID, nil, nil)
 	assertHTTPStatus(t, catalogResult, http.StatusOK)
 	exportedCatalog := decodeHTTPFlowResponse[httpFlowCatalog](t, catalogResult.body)
@@ -308,8 +313,8 @@ func TestHTTPMainFlowThroughWorkerAndGatewayAgent(t *testing.T) {
 	if controller.startCalls() != 1 || runningSession.GatewayID != gatewayRecord.ID ||
 		runningSession.ConnectionMode != gateway.ConnectionModeNative || !runningSession.CanConnect ||
 		runningSession.SourceIP != httpFlowSourceIP || runningSession.TargetAccount != httpFlowTargetAccount ||
-		runningSession.GatewayEndpoint != "gateway.http-flow.internal:32001" ||
-		runningSession.GatewayHost != "gateway.http-flow.internal" || runningSession.GatewayPort != 32001 ||
+		runningSession.GatewayEndpoint != "gateway.test:32001" ||
+		runningSession.GatewayHost != "gateway.test" || runningSession.GatewayPort != 32001 ||
 		runningSession.ListenerPort != 20000 || runningSession.ExposureMode != "kubernetes_nodeport" {
 		t.Fatalf("running session = %+v starts=%d", runningSession, controller.startCalls())
 	}
@@ -594,6 +599,34 @@ type httpFlowHTTPResult struct {
 type httpFlowComponents struct {
 	HTTP   *httpapi.Server
 	Worker *worker.Runner
+}
+
+// The approved runtime keeps the worker-to-agent HTTP transport under test
+// while accepting only the target decrypted from the approved asset.
+type httpFlowSessionRuntime struct {
+	*gateway.HTTPClient
+	endpoint string
+}
+
+func (r *httpFlowSessionRuntime) PublicHost() string  { return "gateway.test" }
+func (r *httpFlowSessionRuntime) RuntimeMode() string { return "kubernetes" }
+func (r *httpFlowSessionRuntime) CreateApprovedSession(ctx context.Context, _ string, request gateway.CreateSessionRequest, target string) (gateway.CreateSessionResponse, error) {
+	if target != httpFlowTarget {
+		return gateway.CreateSessionResponse{}, errors.New("runtime did not receive the approved target")
+	}
+	return r.HTTPClient.CreateSession(ctx, r.endpoint, request)
+}
+func (r *httpFlowSessionRuntime) CloseSession(ctx context.Context, _, sessionID, key string) (gateway.CloseSessionResponse, error) {
+	return r.HTTPClient.CloseSession(ctx, r.endpoint, sessionID, key)
+}
+func (r *httpFlowSessionRuntime) GetSession(ctx context.Context, _, sessionID string) (gateway.SessionStatusResponse, error) {
+	return r.HTTPClient.GetSession(ctx, r.endpoint, sessionID)
+}
+func (r *httpFlowSessionRuntime) CheckReady(ctx context.Context, _ string) error {
+	return r.HTTPClient.CheckReady(ctx, r.endpoint)
+}
+func (r *httpFlowSessionRuntime) GetReadiness(ctx context.Context, _ string) (gateway.ReadinessReport, error) {
+	return r.HTTPClient.GetReadiness(ctx, r.endpoint)
 }
 
 func newHTTPFlowComponents(t *testing.T, ctx context.Context, database *sql.DB, cfg config.Config, client gateway.Client) httpFlowComponents {

@@ -33,7 +33,7 @@ func TestLabelIAMAndLocalApprovalWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock := time.Now().UTC().Truncate(time.Microsecond)
-	svc, err := service.NewAccessService(service.ServiceOptions{SystemSettings: clientAccessFixture(t, db, admin.ID, nil, "sessions.example.com"), DB: db, Users: repos.users, Regions: repos.regions, Gateways: repos.gateways, Assets: repos.assets, Requests: repos.requests, Approvals: repos.approvals, Sessions: repos.sessions, SessionEvents: repos.sessionEvents, Audits: repos.audits, Outbox: repos.outbox, Gateway: gateway.UnavailableClient{}, Logger: zerolog.Nop(), AdminUserIDs: map[string]struct{}{admin.ID: {}}, Clock: func() time.Time { return clock }})
+	svc, err := service.NewAccessService(service.ServiceOptions{SystemSettings: clientAccessFixture(t, db, admin.ID, nil, "sessions.example.com"), DB: db, Users: repos.users, Regions: repos.regions, Gateways: repos.gateways, Assets: repos.assets, Requests: repos.requests, Approvals: repos.approvals, Sessions: repos.sessions, SessionEvents: repos.sessionEvents, Audits: repos.audits, Outbox: repos.outbox, Gateway: &sessionRuntimeStub{}, Logger: zerolog.Nop(), AdminUserIDs: map[string]struct{}{admin.ID: {}}, Clock: func() time.Time { return clock }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestLabelIAMAndLocalApprovalWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	asset, err := repos.assets.Create(ctx, db, domain.Asset{ID: id.New(), RegionID: region.ID, GatewayID: gw.ID, Name: "ssh-server", AssetType: "ssh", TargetCiphertext: "test-ciphertext", RiskLevel: domain.RiskLevelNormal, MaxTTLSeconds: 600, Status: domain.ResourceStatusEnabled})
+	asset, err := repos.assets.Create(ctx, db, domain.Asset{ID: id.New(), RegionID: region.ID, GatewayID: gw.ID, Name: "ssh-server", AssetType: "ssh", TargetCiphertext: "test-ciphertext", RiskLevel: domain.RiskLevelNormal, MaxTTLSeconds: 600, Status: domain.ResourceStatusEnabled, ApprovalWorkflowID: &flow.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,16 +267,26 @@ func TestLabelIAMAndLocalApprovalWorkflow(t *testing.T) {
 	if _, err := svc.DecideApproval(ctx, expiredApprovals[0].ApproverID, expiredApprovals[0].ID, domain.ApprovalApproved, nil); !errors.Is(err, service.ErrStateConflict) {
 		t.Fatalf("late approval accepted: %v", err)
 	}
-	// Duplicate routing must fail without persisting a request or outbox event.
-	flow.ID = ""
-	flow.Revision = 0
-	flow.Name = "ambiguous"
+	// A matching selector on another workflow cannot replace the explicit binding.
+	duplicate := flow
+	duplicate.ID = ""
+	duplicate.Revision = 0
+	duplicate.Name = "same selector"
+	if _, err := svc.SaveWorkflow(ctx, sre.ID, duplicate); err != nil {
+		t.Fatal(err)
+	}
+	input.IdempotencyKey = "explicit-label-workflow"
+	if explicit, err := svc.CreateAccessRequest(ctx, input); err != nil || explicit.WorkflowSnapshot == nil || explicit.WorkflowSnapshot.WorkflowID != flow.ID {
+		t.Fatalf("duplicate selector changed the assigned workflow: %+v %v", explicit, err)
+	}
+	// A disabled assignment must fail without falling back to the matching flow.
+	flow.Enabled = false
 	if _, err := svc.SaveWorkflow(ctx, sre.ID, flow); err != nil {
 		t.Fatal(err)
 	}
-	input.IdempotencyKey = "ambiguous-label-workflow"
+	input.IdempotencyKey = "disabled-label-workflow"
 	if _, err := svc.CreateAccessRequest(ctx, input); !errors.Is(err, service.ErrValidation) {
-		t.Fatalf("ambiguous workflow accepted: %v", err)
+		t.Fatalf("disabled workflow accepted: %v", err)
 	}
 	if _, err := repos.requests.GetByIdempotencyKey(ctx, db, input.IdempotencyKey); !errors.Is(err, repository.ErrNotFound) {
 		t.Fatal("failed request was persisted")
@@ -303,8 +313,13 @@ func TestIdentityRepositoryConstraints(t *testing.T) {
 	ir := repository.IAMRepository{}
 	wr := repository.WorkflowRepository{}
 	roles, err := ir.ListRoles(ctx, db)
-	if err != nil || len(roles) != 6 {
+	if err != nil || len(roles) != 3 {
 		t.Fatalf("built-in migration: %d %v", len(roles), err)
+	}
+	for index, name := range []string{"admin", "auditor", "user"} {
+		if roles[index].Name != name || !roles[index].BuiltIn || !roles[index].Enabled {
+			t.Fatalf("built-in role %q: %+v", name, roles[index])
+		}
 	}
 	if _, err := wr.AssetPolicy(ctx, db, id.New()); err != nil {
 		t.Fatalf("absent labels must use legacy default: %v", err)

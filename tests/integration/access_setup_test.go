@@ -32,7 +32,7 @@ func TestAdminTestAccessAndUserDirectory(t *testing.T) {
 		SystemSettings: clientAccessFixture(t, database, admin.ID, nil, "sessions.example.com"),
 		DB:             database, Users: repos.users, Regions: repos.regions, Gateways: repos.gateways, Assets: repos.assets,
 		Requests: repos.requests, Approvals: repos.approvals, Sessions: repos.sessions, SessionEvents: repos.sessionEvents,
-		Audits: repos.audits, Outbox: repos.outbox, Gateway: gateway.UnavailableClient{}, Logger: zerolog.Nop(),
+		Audits: repos.audits, Outbox: repos.outbox, Gateway: &sessionRuntimeStub{}, Logger: zerolog.Nop(),
 		DefaultTTL: time.Hour, MaxTTL: time.Hour, AdminUserIDs: map[string]struct{}{admin.ID: {}},
 	})
 	if err != nil {

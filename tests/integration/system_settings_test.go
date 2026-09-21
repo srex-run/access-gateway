@@ -85,18 +85,36 @@ func TestSystemSettingsPersistenceSecretsAndReplicaReload(t *testing.T) {
 
 	config.Auth.OIDC.Enabled, config.Auth.LocalEnabled = true, false
 	config.Auth.OIDC.ClientID, config.Auth.OIDC.Issuer = "client", "https://identity.example.test"
-	if _, err := first.Save(ctx, actor.ID, service.SettingsUpdate{Config: &config, Revision: &view.Revision, Secrets: settings.SecretChanges{OIDC: &secret}}); !errors.Is(err, service.ErrValidation) {
-		t.Fatalf("disabled administrator's only login: %v", err)
+	view, err = first.Save(ctx, actor.ID, service.SettingsUpdate{Config: &config, Revision: &view.Revision, Secrets: settings.SecretChanges{OIDC: &secret}})
+	if err != nil || !view.Config.Auth.LocalEnabled {
+		t.Fatalf("legacy local_enabled=false disabled the permanent recovery login: %+v %v", view.Config.Auth, err)
 	}
-	if err := users.CreateIdentity(ctx, database, "oidc", config.Auth.OIDC.Issuer, "admin-subject", actor.ID); err != nil {
+	runtime, err = second.Current(ctx)
+	if err != nil || !runtime.Auth.LocalEnabled || runtime.Revision != view.Revision {
+		t.Fatalf("replica lost the local recovery login: %v", err)
+	}
+	credential, err := users.LocalCredential(ctx, database, "settings-admin")
+	if err != nil || credential.UserID != actor.ID || !security.CheckPassword(credential.PasswordHash, "settings-admin-password") {
+		t.Fatalf("external provider configuration invalidated local recovery credentials: %v", err)
+	}
+	// An external-only administrator still needs an identity linked to the
+	// exact enabled issuer; local login cannot help an account without a password.
+	externalActor, err := users.Create(ctx, database, domain.User{ID: id.New(), Nickname: "External Settings Admin", Status: domain.UserStatusActive})
+	if err != nil {
 		t.Fatal(err)
 	}
-	view, err = first.Save(ctx, actor.ID, service.SettingsUpdate{Config: &config, Revision: &view.Revision, Secrets: settings.SecretChanges{OIDC: &secret}})
+	if _, err := first.Save(ctx, externalActor.ID, service.SettingsUpdate{Config: &config, Revision: &view.Revision}); !errors.Is(err, service.ErrValidation) {
+		t.Fatalf("administrator without any configured login saved settings: %v", err)
+	}
+	if err := users.CreateIdentity(ctx, database, "oidc", config.Auth.OIDC.Issuer, "admin-subject", externalActor.ID); err != nil {
+		t.Fatal(err)
+	}
+	view, err = first.Save(ctx, externalActor.ID, service.SettingsUpdate{Config: &config, Revision: &view.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
 	config.Auth.OIDC.Issuer = "https://different-identity.example.test"
-	if _, err := first.Save(ctx, actor.ID, service.SettingsUpdate{Config: &config, Revision: &view.Revision}); !errors.Is(err, service.ErrValidation) {
+	if _, err := first.Save(ctx, externalActor.ID, service.SettingsUpdate{Config: &config, Revision: &view.Revision}); !errors.Is(err, service.ErrValidation) {
 		t.Fatalf("unrelated issuer counted as recovery login: %v", err)
 	}
 
@@ -127,7 +145,7 @@ func TestSystemSettingsPersistenceSecretsAndReplicaReload(t *testing.T) {
 		t.Fatalf("concurrent updates: success=%d conflict=%d", success, conflict)
 	}
 	audits, err := repository.NewAuditEventRepository().List(ctx, database, domain.AuditFilter{EventType: "system.settings_updated", Limit: 100})
-	if err != nil || len(audits) != 5 {
+	if err != nil || len(audits) != 6 {
 		t.Fatalf("transactional audit count = %d, %v", len(audits), err)
 	}
 	encoded, _ = json.Marshal(audits)

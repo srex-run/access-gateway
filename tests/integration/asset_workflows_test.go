@@ -83,7 +83,7 @@ func TestAssetWorkflowAssignmentPersistsAndControlsApproval(t *testing.T) {
 	}
 	updated, err = svc.UpdateAsset(ctx, admin.ID, asset.ID, service.UpdateAssetInput{ApprovalWorkflowID: stringPointer("")})
 	if err != nil || updated.ApprovalWorkflowID != nil {
-		t.Fatalf("could not restore automatic matching: %+v %v", updated, err)
+		t.Fatalf("could not clear the assigned workflow: %+v %v", updated, err)
 	}
 	updatedEvents, err := repos.audits.List(ctx, database, domain.AuditFilter{AssetID: asset.ID, EventType: "asset.updated", Limit: 10})
 	if err != nil || len(updatedEvents) != 2 {
@@ -103,9 +103,8 @@ func TestAssetWorkflowAssignmentPersistsAndControlsApproval(t *testing.T) {
 	if _, err := svc.CreateAssetApprover(ctx, admin.ID, asset.ID, domain.AssetApprover{UserID: admin.ID, ApprovalLevel: 1, Role: "owner"}); err != nil {
 		t.Fatal(err)
 	}
-	view, err = svc.PreviewAssetWorkflow(ctx, applicant.ID, asset.ID)
-	if err != nil || view.Snapshot != nil || len(view.Approvals) != 1 {
-		t.Fatalf("legacy approval fallback lost: %+v %v", view, err)
+	if _, err := svc.PreviewAssetWorkflow(ctx, applicant.ID, asset.ID); !errors.Is(err, service.ErrValidation) {
+		t.Fatalf("unassigned asset fell back to legacy approvers: %v", err)
 	}
 }
 

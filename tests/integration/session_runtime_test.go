@@ -27,7 +27,9 @@ func (r *sessionRuntimeStub) PublicHost() string  { return "sessions.example.com
 func (r *sessionRuntimeStub) RuntimeMode() string { return "kubernetes" }
 func (r *sessionRuntimeStub) CreateApprovedSession(_ context.Context, _ string, request gateway.CreateSessionRequest, target string) (gateway.CreateSessionResponse, error) {
 	r.target, r.creates = target, r.creates+1
-	started := time.Now().UTC().Truncate(time.Second)
+	// Keep the real start instant: truncating it can place approval expiry more
+	// than TTLSeconds after the reported start and trigger the lease guard.
+	started := time.Now().UTC()
 	expires := started.Add(time.Duration(request.TTLSeconds) * time.Second)
 	if request.ExpiresAt != nil {
 		expires = *request.ExpiresAt

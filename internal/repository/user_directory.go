@@ -46,8 +46,8 @@ func (r *UserRepository) UpdateProfile(ctx context.Context, q DBTX, v domain.Use
 	if err != nil {
 		return opError("encode user labels", err)
 	}
-	const query = `UPDATE users SET nickname=$2, email=$3, department=$4, status=$5, labels=$6, revision=revision+1,
-		auth_version=auth_version+CASE WHEN status<>$5 THEN 1 ELSE 0 END, updated_at=NOW() WHERE id=$1 AND revision=$7`
+	const query = `UPDATE users SET nickname=$2, email=$3, department=$4, status=$5::varchar, labels=$6, revision=revision+1,
+		auth_version=auth_version+CASE WHEN status<>$5::varchar THEN 1 ELSE 0 END, updated_at=NOW() WHERE id=$1 AND revision=$7`
 	result, err := q.ExecContext(ctx, query, v.ID, v.Nickname, v.Email, v.Department, v.Status, labels, v.Revision)
 	if err != nil {
 		return opError("update user profile", err)
