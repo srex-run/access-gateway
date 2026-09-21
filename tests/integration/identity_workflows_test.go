@@ -20,6 +20,7 @@ import (
 	"github.com/srex-run/access-gateway/internal/label"
 	"github.com/srex-run/access-gateway/internal/repository"
 	"github.com/srex-run/access-gateway/internal/service"
+	"github.com/srex-run/access-gateway/internal/sessionproxy"
 )
 
 // Uses real migrations, SQL scans and local accounts; no external identity provider.
@@ -129,7 +130,10 @@ func TestLabelIAMAndLocalApprovalWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if policy.AssetID != asset.ID || policy.Revision != 1 || policy.UpdatedAt.IsZero() || !reflect.DeepEqual(policy.Labels, label.Labels{"team": "db", "approval": "db-test"}) {
+	// asset_labels_default_audit_profile always re-injects the automatic audit
+	// profile, so an explicit policy carries it alongside the saved labels.
+	expected := label.Labels{"team": "db", "approval": "db-test", sessionproxy.ProfileLabel: sessionproxy.AutoProfile}
+	if policy.AssetID != asset.ID || policy.Revision != 1 || policy.DefaultsOnly || policy.UpdatedAt.IsZero() || !reflect.DeepEqual(policy.Labels, expected) {
 		t.Fatalf("asset policy scan: %+v", policy)
 	}
 	if _, err := svc.SaveAssetPolicy(ctx, sre.ID, asset.ID, approvalflow.AssetPolicy{Labels: label.Labels{"team": "db"}, Revision: 99}); !errors.Is(err, service.ErrStateConflict) {

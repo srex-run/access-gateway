@@ -11,11 +11,13 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/srex-run/access-gateway/internal/approvalflow"
 	"github.com/srex-run/access-gateway/internal/authz"
 	"github.com/srex-run/access-gateway/internal/domain"
 	"github.com/srex-run/access-gateway/internal/gateway"
 	"github.com/srex-run/access-gateway/internal/iam"
 	"github.com/srex-run/access-gateway/internal/id"
+	"github.com/srex-run/access-gateway/internal/label"
 	"github.com/srex-run/access-gateway/internal/repository"
 	"github.com/srex-run/access-gateway/internal/service"
 )
@@ -66,7 +68,14 @@ func TestAdminTestAccessAndUserDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	asset, err := repos.assets.Create(ctx, database, domain.Asset{ID: id.New(), RegionID: region.ID, GatewayID: gw.ID, Name: "mysql", AssetType: "mysql", TargetCiphertext: "test-fixture-ciphertext", RiskLevel: domain.RiskLevelNormal, MaxTTLSeconds: 3600, Status: domain.ResourceStatusEnabled})
+	// Approval routing is explicit: the asset selects its workflow, and the
+	// workflow node selects approvers through an ordinary role label.
+	flow, err := svc.SaveWorkflow(ctx, admin.ID, approvalflow.Definition{Name: "Asset approver review", Enabled: true, TimeoutSeconds: 600,
+		Steps: []approvalflow.Step{{Name: "Asset approver", Kind: "role_selector", Mode: "any", Selector: "approval=asset"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset, err := repos.assets.Create(ctx, database, domain.Asset{ID: id.New(), RegionID: region.ID, GatewayID: gw.ID, Name: "mysql", AssetType: "mysql", TargetCiphertext: "test-fixture-ciphertext", RiskLevel: domain.RiskLevelNormal, MaxTTLSeconds: 3600, Status: domain.ResourceStatusEnabled, ApprovalWorkflowID: &flow.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +139,7 @@ func TestAdminTestAccessAndUserDirectory(t *testing.T) {
 	if _, err := svc.PreviewAssetWorkflow(ctx, admin.ID, asset.ID); !errors.Is(err, service.ErrValidation) {
 		t.Fatalf("ordinary user was assigned an approval without permission: %v", err)
 	}
-	role, err := svc.SaveIAMRole(ctx, admin.ID, iam.Role{Name: "asset-approver", Enabled: true, Permissions: []authz.Permission{authz.PermissionApprovalManage}})
+	role, err := svc.SaveIAMRole(ctx, admin.ID, iam.Role{Name: "asset-approver", Enabled: true, Labels: label.Labels{"approval": "asset"}, Permissions: []authz.Permission{authz.PermissionApprovalManage}})
 	if err != nil {
 		t.Fatal(err)
 	}

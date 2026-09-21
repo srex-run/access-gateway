@@ -118,6 +118,17 @@ func TestWebTerminalSSHRealInteractiveShell(t *testing.T) {
 		}
 	}
 	var pending string
+	readMore := func() {
+		t.Helper()
+		kind, data, err := browser.ReadMessage()
+		if err != nil {
+			t.Fatalf("terminal output: %v; received %q", err, pending)
+		}
+		if kind != websocket.BinaryMessage {
+			t.Fatalf("expected shell bytes, received %s", data)
+		}
+		pending += string(data)
+	}
 	readUntil := func(want string) string {
 		t.Helper()
 		for {
@@ -127,14 +138,18 @@ func TestWebTerminalSSHRealInteractiveShell(t *testing.T) {
 				pending = pending[end:]
 				return response
 			}
-			kind, data, err := browser.ReadMessage()
-			if err != nil {
-				t.Fatalf("terminal output: %v; received %q", err, pending)
+			readMore()
+		}
+	}
+	readMatch := func(pattern *regexp.Regexp) string {
+		t.Helper()
+		for {
+			if match := pattern.FindStringIndex(pending); match != nil {
+				response := pending[:match[1]]
+				pending = pending[match[1]:]
+				return response
 			}
-			if kind != websocket.BinaryMessage {
-				t.Fatalf("expected shell bytes, received %s", data)
-			}
-			pending += string(data)
+			readMore()
 		}
 	}
 	input := func(data string) {
@@ -177,8 +192,11 @@ func TestWebTerminalSSHRealInteractiveShell(t *testing.T) {
 		t.Fatal("SSH window-change was not received")
 	}
 	input("stty size\r")
-	// SIGWINCH can repaint the prompt before the command produces its output.
-	readUntil("\r\n42 117\r\n")
+	// SIGWINCH can repaint the prompt before the command produces its output,
+	// and readline ends the accepted input line with "\x1b[?2004l\r" instead of
+	// "\r\n" wherever bracketed paste is available, so anchor the reported size
+	// to the start of its own line rather than to a preceding line feed.
+	readMatch(regexp.MustCompile(`(?:\r|\n)42 117\r\n`))
 	readUntil("SSH_TEST> ")
 	input("printf '\\nWAIT%s\\n' ING; read value\r")
 	readUntil("\r\nWAITING\r\n")

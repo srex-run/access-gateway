@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -122,17 +123,25 @@ func TestNativeHTTPTerminalAndCancellation(t *testing.T) {
 			if revoked {
 				cancel()
 			} else {
-				waitOutput := func(want string) {
+				waitFor := func(description string, found func(string) bool) {
 					t.Helper()
-					for !strings.Contains(stream.text(), want) {
+					for !found(stream.text()) {
 						select {
 						case <-stream.changed:
 						case err := <-done:
 							t.Fatalf("native terminal: %v, output=%s", err, stream.text())
 						case <-ctx.Done():
-							t.Fatalf("waiting for %q: %s", want, stream.text())
+							t.Fatalf("waiting for %s: %s", description, stream.text())
 						}
 					}
+				}
+				waitOutput := func(want string) {
+					t.Helper()
+					waitFor(fmt.Sprintf("%q", want), func(output string) bool { return strings.Contains(output, want) })
+				}
+				waitMatch := func(pattern *regexp.Regexp) {
+					t.Helper()
+					waitFor(pattern.String(), pattern.MatchString)
 				}
 				waitOutput("http> ")
 				if err := stream.resize(40, 120); err != nil {
@@ -146,7 +155,10 @@ func TestNativeHTTPTerminalAndCancellation(t *testing.T) {
 				if _, err := writer.Write([]byte("printf '\\162eady-to-interrupt\\n'; sleep 30\r")); err != nil {
 					t.Fatal(err)
 				}
-				waitOutput("\r\nready-to-interrupt\r\n")
+				// readline ends the accepted input line with "\x1b[?2004l\r"
+				// instead of "\r\n" wherever bracketed paste is available, so
+				// anchor this bare command's output to the start of its own line.
+				waitMatch(regexp.MustCompile(`(?:\r|\n)ready-to-interrupt\r\n`))
 				if _, err := writer.Write([]byte{3}); err != nil {
 					t.Fatal(err)
 				}

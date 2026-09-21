@@ -1,6 +1,7 @@
 package sessionruntime
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -76,15 +77,39 @@ func TestDockerComposeContainsNoPermanentAgent(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("Docker CLI is not installed; static Compose contract passed")
 	}
-	command := exec.Command("docker", "compose", "--env-file", filepath.Join("..", "..", ".env.example"), "-f", path, "config", "--no-env-resolution", "--format", "json")
+	// migrate, initialize and access-gateway declare env_file: .env, which
+	// Compose stats even under --no-env-resolution, and .env is never committed.
+	// Render from a throwaway copy of the manifest next to the published
+	// example, the way scripts/compose-startup.test.mjs does, so a clean
+	// checkout renders the same model a host does and the project directory
+	// stays the manifest's own directory.
+	example, err := os.ReadFile(filepath.Join("..", "..", ".env.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := filepath.Join(t.TempDir(), "access-gateway-compose")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "docker-compose.yml"), encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".env"), example, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("docker", "compose", "--env-file", filepath.Join(workspace, ".env"),
+		"config", "--no-env-resolution", "--format", "json")
+	command.Dir = workspace
 	command.Env = append(os.Environ(),
 		"ACCESS_GATEWAY_IMAGE=registry.test/api@sha256:"+strings.Repeat("1", 64),
 		"ACCESS_GATEWAY_SECRETS_HOST_PATH=/srv/control-secrets", "SESSION_AGENT_STATE_HOST_PATH=/srv/session-state",
 		"PUBLIC_URL=https://access.example.test:8443", "DOCKER_SOCKET_GID=999", "DOCKER_SOCKET_HOST_PATH=/var/run/docker.sock",
 		"SESSION_AGENT_CONTROL_PLANE_URL=", "SESSION_AGENT_ALLOW_AUDIT_HTTP=", "ACCESS_GATEWAY_API_PORT=18080")
+	var diagnostics bytes.Buffer
+	command.Stderr = &diagnostics
 	encoded, err = command.Output()
 	if err != nil {
-		t.Fatalf("Docker Compose rendering failed: %v", err)
+		t.Fatalf("Docker Compose rendering failed: %v: %s", err, strings.TrimSpace(diagnostics.String()))
 	}
 	var rendered composeConfig
 	if err := json.Unmarshal(encoded, &rendered); err != nil {

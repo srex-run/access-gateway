@@ -79,7 +79,13 @@ func (r WorkflowRepository) SaveAssetPolicy(ctx context.Context, q DBTX, v appro
 	if err != nil {
 		return v, opError("encode asset labels", err)
 	}
-	const create = `INSERT INTO asset_labels (asset_id, labels) SELECT $1,$2 WHERE $3::bigint=0 ON CONFLICT DO NOTHING RETURNING ` + assetPolicyColumns
+	// assets_default_audit_profile pre-creates this row with defaults_only=TRUE,
+	// so a first explicit save claims that generated row at revision 1 instead
+	// of inserting. A row that already holds configuration stays untouched and
+	// is reported to the caller as a revision conflict.
+	const create = `INSERT INTO asset_labels (asset_id, labels) SELECT $1,$2 WHERE $3::bigint=0
+		ON CONFLICT (asset_id) DO UPDATE SET labels=EXCLUDED.labels, defaults_only=FALSE, updated_at=NOW()
+		WHERE asset_labels.defaults_only RETURNING ` + assetPolicyColumns
 	const update = `UPDATE asset_labels SET labels=$2, defaults_only=FALSE, revision=revision+1, updated_at=NOW() WHERE asset_id=$1 AND revision=$3 RETURNING ` + assetPolicyColumns
 	query := create
 	if v.Revision > 0 {

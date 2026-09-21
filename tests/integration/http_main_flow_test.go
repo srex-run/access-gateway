@@ -171,7 +171,7 @@ func TestHTTPMainFlowThroughWorkerAndGatewayAgent(t *testing.T) {
 
 	workflowResult := performJSONRequest(t, plainClient, http.MethodPost, controlPlane.URL+"/api/v1/admin/workflows", admin.ID, approvalflow.Definition{
 		Name: "HTTP Flow Approval", Enabled: true, TimeoutSeconds: 600,
-		Steps: []approvalflow.Step{{Name: "Technical owner", Kind: "role_selector", Mode: "any", Selector: "access-gateway.io/role=http-approver"}},
+		Steps: []approvalflow.Step{{Name: "Technical owner", Kind: "role_selector", Mode: "any", Selector: "duty=http-approver"}},
 	}, nil)
 	assertHTTPStatus(t, workflowResult, http.StatusOK)
 	workflow := decodeHTTPFlowResponse[approvalflow.Definition](t, workflowResult.body)
@@ -215,6 +215,7 @@ func TestHTTPMainFlowThroughWorkerAndGatewayAgent(t *testing.T) {
 	assertHTTPStatus(t, portResult, http.StatusCreated)
 	roleResult := performJSONRequest(t, plainClient, http.MethodPost, controlPlane.URL+"/api/v1/admin/roles", admin.ID, map[string]any{
 		"name": "http-approver", "enabled": true, "permissions": []string{"approval:manage"},
+		"labels": map[string]string{"duty": "http-approver"},
 	}, nil)
 	assertHTTPStatus(t, roleResult, http.StatusOK)
 	grantResult := performJSONRequest(t, plainClient, http.MethodPost, controlPlane.URL+"/api/v1/admin/role-assignments", admin.ID, map[string]any{
@@ -281,8 +282,12 @@ func TestHTTPMainFlowThroughWorkerAndGatewayAgent(t *testing.T) {
 	waitForHTTPFlow(t, 3*time.Second, "approval notification", func() bool {
 		return feishuPlatform.hasMessage(approver.FeishuOpenID, "interactive", approvedRequest.ID)
 	})
-	assertHTTPStatus(t, performHTTPRequest(t, plainClient, http.MethodGet, controlPlane.URL+"/api/v1/approvals/pending?limit=50", approver.ID, nil, nil), http.StatusNotFound)
 	pending := pendingApprovalForRequest(t, repos, database, approvedRequest.ID)
+	pendingResult := performHTTPRequest(t, plainClient, http.MethodGet, controlPlane.URL+"/api/v1/approvals/pending?limit=50", approver.ID, nil, nil)
+	assertHTTPStatus(t, pendingResult, http.StatusOK)
+	if listed := decodeHTTPFlowResponse[[]httpFlowPendingApproval](t, pendingResult.body); len(listed) != 1 || listed[0].ID != pending.ID || listed[0].RequestID != approvedRequest.ID || listed[0].StepName != "Technical owner" {
+		t.Fatalf("pending approvals for the approver = %s", pendingResult.body)
+	}
 	callbackBody := marshalHTTPFlowJSON(t, map[string]any{
 		"header": map[string]any{"event_id": "http-flow-callback-1", "tenant_key": "tenant-http-flow"},
 		"event": map[string]any{
@@ -332,14 +337,25 @@ func TestHTTPMainFlowThroughWorkerAndGatewayAgent(t *testing.T) {
 	if value := decodeHTTPFlowResponse[httpFlowSession](t, secondReplicaSession.body); value.GatewayEndpoint != runningSession.GatewayEndpoint || value.ConnectionMode != gateway.ConnectionModeNative || !value.CanConnect {
 		t.Fatalf("second replica session = %+v", value)
 	}
-	assertHTTPStatus(t, performHTTPRequest(t, applicantClient, http.MethodPost, secondControlPlane.URL+"/api/v1/sessions/"+runningSession.ID+"/token", "", nil, nil), http.StatusNotFound)
+	// The token and credential endpoints were removed. go-restful answers an
+	// unrouted sub-path of a matched service with 406; what matters is that no
+	// handler exists to mint a grant over HTTP.
+	retiredToken := performHTTPRequest(t, applicantClient, http.MethodPost, secondControlPlane.URL+"/api/v1/sessions/"+runningSession.ID+"/token", "", nil, nil)
+	assertHTTPStatus(t, retiredToken, http.StatusNotAcceptable)
+	if len(retiredToken.body) != 0 {
+		t.Fatalf("retired token endpoint returned a body: %s", retiredToken.body)
+	}
 	storedSession, err := repos.sessions.GetByID(ctx, database, runningSession.ID)
 	if err != nil || storedSession.TokenHash != nil || storedSession.ListenerPort == nil || *storedSession.ListenerPort != 20000 ||
 		storedSession.ConnectionMode != gateway.ConnectionModeNative || storedSession.TunnelClientPublicKey != "" || storedSession.TunnelServerCertificate != "" ||
 		storedSession.ExternalPort == nil || *storedSession.ExternalPort != 32001 || storedSession.ExposureRef == nil {
 		t.Fatalf("stored direct session = %+v err=%v", storedSession, err)
 	}
-	assertHTTPStatus(t, performHTTPRequest(t, applicantClient, http.MethodPost, secondControlPlane.URL+"/api/v1/sessions/"+runningSession.ID+"/credential", "", nil, nil), http.StatusNotFound)
+	retiredCredential := performHTTPRequest(t, applicantClient, http.MethodPost, secondControlPlane.URL+"/api/v1/sessions/"+runningSession.ID+"/credential", "", nil, nil)
+	assertHTTPStatus(t, retiredCredential, http.StatusNotAcceptable)
+	if len(retiredCredential.body) != 0 {
+		t.Fatalf("retired credential endpoint returned a body: %s", retiredCredential.body)
+	}
 
 	connectionID := id.New()
 	connectedAt := time.Now().UTC().Add(-time.Second)
@@ -363,7 +379,14 @@ func TestHTTPMainFlowThroughWorkerAndGatewayAgent(t *testing.T) {
 		gatewayauth.SessionIDHeader:  runningSession.ID,
 		gateway.AuditSecretHeader:    components.HTTP.SessionAuditCredentials.Issue(gatewayRecord.ID, runningSession.ID, time.Now().Add(cfg.SessionMaxTTL)),
 	}
-	assertHTTPStatus(t, performHTTPRequest(t, plainClient, http.MethodPost, controlPlane.URL+"/internal/gateway/events/batch", "", gatewayEventBody, map[string]string{"X-Gateway-Internal-Secret": "wrong-secret"}), http.StatusForbidden)
+	// Gateway events carry a per-session audit credential; a forged one is
+	// rejected as unauthenticated before any event is recorded.
+	forgedAuditHeaders := map[string]string{
+		gateway.AuditGatewayIDHeader: gatewayRecord.ID,
+		gatewayauth.SessionIDHeader:  runningSession.ID,
+		gateway.AuditSecretHeader:    "forged-session-audit-secret",
+	}
+	assertHTTPStatus(t, performHTTPRequest(t, plainClient, http.MethodPost, controlPlane.URL+"/internal/gateway/events/batch", "", gatewayEventBody, forgedAuditHeaders), http.StatusUnauthorized)
 	assertHTTPStatus(t, performHTTPRequest(t, plainClient, http.MethodPost, controlPlane.URL+"/internal/gateway/events/batch", "", gatewayEventBody, auditHeaders), http.StatusOK)
 	assertHTTPStatus(t, performHTTPRequest(t, plainClient, http.MethodPost, controlPlane.URL+"/internal/gateway/events/batch", "", gatewayEventBody, auditHeaders), http.StatusOK)
 
@@ -448,7 +471,16 @@ func TestHTTPMainFlowThroughWorkerAndGatewayAgent(t *testing.T) {
 	if len(unmatched) != 2 || unmatched[0].EventID != ambiguousEventID || unmatched[0].Metadata["correlation_reason"] != "ambiguous_connection" || unmatched[1].EventID != unmatchedEventID || unmatched[1].Metadata["correlation_reason"] != "connection_not_found" {
 		t.Fatalf("unmatched operation audit list = %s", unmatchedList.body)
 	}
-	assertHTTPStatus(t, performHTTPRequest(t, applicantClient, http.MethodGet, controlPlane.URL+"/api/v1/operation-audit-events", "", nil, nil), http.StatusForbidden)
+	// Ordinary users hold session:manage, so operation audit reads are scoped
+	// to their own sessions rather than refused; another subject stays closed.
+	applicantAudit := performHTTPRequest(t, applicantClient, http.MethodGet, controlPlane.URL+"/api/v1/operation-audit-events", "", nil, nil)
+	assertHTTPStatus(t, applicantAudit, http.StatusOK)
+	for _, event := range decodeHTTPFlowResponse[[]httpFlowOperationAudit](t, applicantAudit.body) {
+		if event.SessionID != runningSession.ID {
+			t.Fatalf("applicant read another subject's operation audit: %s", applicantAudit.body)
+		}
+	}
+	assertHTTPStatus(t, performHTTPRequest(t, applicantClient, http.MethodGet, controlPlane.URL+"/api/v1/operation-audit-events?subject_user_id="+url.QueryEscape(approver.ID), "", nil, nil), http.StatusForbidden)
 	eventsResult := performHTTPRequest(t, applicantClient, http.MethodGet, controlPlane.URL+"/api/v1/sessions/"+runningSession.ID+"/events?limit=100", "", nil, nil)
 	assertHTTPStatus(t, eventsResult, http.StatusOK)
 	if !containsHTTPFlowEvent(decodeHTTPFlowResponse[[]httpFlowEvent](t, eventsResult.body), "session.started") || !containsHTTPFlowEvent(decodeHTTPFlowResponse[[]httpFlowEvent](t, eventsResult.body), "connection.backend_connected") {
@@ -554,6 +586,12 @@ type httpFlowAccessRequest struct {
 	Status        string `json:"status"`
 	SourceIP      string `json:"source_ip"`
 	TargetAccount string `json:"target_account"`
+}
+
+type httpFlowPendingApproval struct {
+	ID        string `json:"id"`
+	RequestID string `json:"request_id"`
+	StepName  string `json:"step_name"`
 }
 
 type httpFlowSession struct {

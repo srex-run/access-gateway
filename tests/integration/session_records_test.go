@@ -255,7 +255,7 @@ func TestSessionRecordsVisibilityAndTrace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testSession, err := repos.sessions.Create(ctx, database, domain.Session{ID: id.New(), RequestID: testRequest.ID, GatewayID: gw.ID, Status: domain.SessionProvisioning, ConnectionMode: gateway.ConnectionModeAudit})
+	testSession, err := repos.sessions.Create(ctx, database, domain.Session{ID: id.New(), RequestID: testRequest.ID, GatewayID: gw.ID, Status: domain.SessionProvisioning, ConnectionMode: gateway.ConnectionModeAudit, AuditPolicy: operationaudit.Policy{Profile: "mysql", Revision: strings.Repeat("a", 64), Protocol: "mysql"}})
 	if err != nil {
 		t.Fatal(err)
 	}

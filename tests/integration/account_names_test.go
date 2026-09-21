@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"regexp"
 	"slices"
@@ -80,10 +81,11 @@ func TestUnifiedAccountNames(t *testing.T) {
 	}
 }
 
-func TestAccountNamesMigration(t *testing.T) {
-	database := openDatabaseAtVersion(t, 32)
+// seedLegacyAccountNames writes the pre-00033 account shape: display names on
+// users and the login name on local_accounts.
+func seedLegacyAccountNames(t *testing.T, database *sql.DB, localID, externalID, blankID string) {
+	t.Helper()
 	ctx := context.Background()
-	localID, externalID, blankID := id.New(), id.New(), id.New()
 	if _, err := database.ExecContext(ctx, `INSERT INTO users (id, name, email, status) VALUES
 		($1, '本地用户', 'alice@example.test', 'active'),
 		($2, '外部用户', 'alice@example.test', 'active'),
@@ -93,6 +95,13 @@ func TestAccountNamesMigration(t *testing.T) {
 	if _, err := database.ExecContext(ctx, `INSERT INTO local_accounts (user_id, username, password_hash) VALUES ($1, 'alice', 'existing-hash')`, localID); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestAccountNamesMigration(t *testing.T) {
+	database := openDatabaseAtVersion(t, 32)
+	ctx := context.Background()
+	localID, externalID, blankID := id.New(), id.New(), id.New()
+	seedLegacyAccountNames(t, database, localID, externalID, blankID)
 	resetSchema(t, database)
 	users := repository.NewUserRepository()
 	local, err := users.GetByID(ctx, database, localID)
@@ -117,6 +126,22 @@ func TestAccountNamesMigration(t *testing.T) {
 	local, err = users.GetByID(ctx, database, localID)
 	if err != nil || local.Nickname != "alice" {
 		t.Fatalf("database nickname default: %+v %v", local, err)
+	}
+}
+
+// 00033 must restore local logins when it is rolled back. Later versions
+// deliberately refuse rollback to protect approval and notification history,
+// so the reverse leg runs against the schema version 00033 belongs to instead
+// of walking the whole chain back from HEAD.
+func TestAccountNamesMigrationRollback(t *testing.T) {
+	database := openDatabaseAtVersion(t, 32)
+	ctx := context.Background()
+	localID, externalID, blankID := id.New(), id.New(), id.New()
+	seedLegacyAccountNames(t, database, localID, externalID, blankID)
+	migrateSchemaTo(t, database, 33)
+	// A blank nickname falls back to the username, which the rollback must keep.
+	if _, err := database.ExecContext(ctx, `UPDATE users SET nickname=NULL WHERE id=$1`, localID); err != nil {
+		t.Fatal(err)
 	}
 	if err := goose.DownToContext(ctx, database, ".", 32); err != nil {
 		t.Fatal(err)
