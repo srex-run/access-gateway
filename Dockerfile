@@ -44,7 +44,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # Native web clients run in the session worker from the same application image.
 # MongoDB's official multi-architecture image supplies its glibc-based shell.
-FROM mongo:8.0-noble AS mongo-client
+FROM mongo:8.3-noble AS mongo-client
 FROM ubuntu:24.04 AS access-gateway
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
