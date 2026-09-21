@@ -1,0 +1,19 @@
+# Deploy this directory to /data/deploy/nginx on the application host.
+# Place certificates in ./tls, then run: docker compose up -d
+services:
+  nginx:
+    image: ${NGINX_IMAGE:-nginx:stable-alpine}
+    # Linux host mode binds the conf.d listen ports (80/443) directly on the host.
+    # Port publishing via "ports" is for bridge mode; host mode needs no mapping.
+    # The upstream application listens on the same host at 127.0.0.1:8080.
+    network_mode: host
+    volumes:
+      - ./conf.d:/etc/nginx/conf.d:ro
+      - ./tls:/etc/nginx/tls:ro
+    restart: unless-stopped
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,156 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: namespace-default-deny
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: access-gateway-production
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: access-gateway
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: session-agent
+      ports:
+        - protocol: TCP
+          port: 8080
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: REPLACE_INGRESS_NAMESPACE
+      ports:
+        - protocol: TCP
+          port: 8080
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: REPLACE_MONITORING_NAMESPACE
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: session-agent
+      ports:
+        - protocol: TCP
+          port: 8090
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.20/32
+      ports:
+        - protocol: TCP
+          port: 16443
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.10/32
+      ports:
+        - protocol: TCP
+          port: 15432
+    - to:
+        - ipBlock:
+            cidr: 203.0.113.0/24
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: access-gateway-migrate-production
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: access-gateway-migrate
+  policyTypes: ["Ingress", "Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.10/32
+      ports:
+        - protocol: TCP
+          port: 15432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: session-agent-production
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: session-agent
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: access-gateway
+      ports:
+        - protocol: TCP
+          port: 8090
+    - from:
+        - ipBlock:
+            cidr: 192.0.2.0/24
+      ports:
+        - protocol: TCP
+          port: 20000
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 198.51.100.0/24
+      ports:
+        - protocol: TCP
+          port: 1
+          endPort: 65535
+    - to:
+        - ipBlock:
+            cidr: 203.0.113.0/24
+      ports:
+        - protocol: TCP
+          port: 443

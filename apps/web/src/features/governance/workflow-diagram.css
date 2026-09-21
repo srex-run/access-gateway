@@ -1,0 +1,14 @@
+.workflow-diagram { margin: 16px 0 24px; min-width: 0; padding: 16px; border: 1px solid var(--color-border-2); border-radius: 8px; background: var(--color-fill-1); color: var(--color-text-1); }
+.workflow-diagram-steps { display: flex; align-items: center; gap: 12px; list-style: none; padding: 0 0 4px; margin: 12px 0 0; overflow-x: auto; }
+.workflow-diagram-steps > li { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+.workflow-diagram-node { min-width: 104px; max-width: 240px; padding: 12px 18px; border: 1px solid var(--color-border-3); border-radius: 6px; background: var(--color-bg-2); text-align: center; overflow-wrap: anywhere; box-sizing: border-box; }
+.workflow-diagram-arrow { flex-shrink: 0; color: var(--color-text-2); font-size: 20px; line-height: 1; }
+.workflow-diagram-step-link { padding: 0; border: 0; background: transparent; text-align: center; font: inherit; font-weight: 600; color: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.workflow-diagram-step-link:hover { text-decoration: underline; }
+.workflow-diagram-step-link:focus-visible { outline: 2px solid var(--color-text-1); outline-offset: 3px; }
+@media (max-width: 640px) {
+  .workflow-diagram-steps { flex-direction: column; align-items: stretch; overflow-x: visible; }
+  .workflow-diagram-steps > li { flex-direction: column; }
+  .workflow-diagram-node { width: 100%; max-width: none; }
+  .workflow-diagram-arrow { transform: rotate(90deg); }
+}

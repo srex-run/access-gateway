@@ -1,0 +1,50 @@
+.session-web-terminal { display: grid; gap: 16px; min-width: 0; }
+.terminal-panel { position: relative; min-width: 0; border: 1px solid var(--color-border-2); border-radius: 8px; overflow: hidden; }
+.terminal-toolbar { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; background: var(--color-fill-1); }
+.terminal-font-size { width: 88px; }
+.terminal-screen { display: flex; height: min(480px, 65vh); min-height: 260px; padding: 12px; color: #fff; background: #12151c; color-scheme: dark; overflow: hidden; }
+.terminal-host { flex: 1; min-width: 0; min-height: 0; }
+.terminal-screen .xterm { height: 100%; }
+/* The deployed CSP blocks xterm's injected <style> elements. Keep the caret
+   and its cell geometry in this external stylesheet so blank cursor cells
+   still occupy a full character, including after a font-size change. */
+.terminal-screen .xterm-rows { font-family: inherit; font-size: inherit; font-kerning: none; white-space: pre; pointer-events: none; }
+.terminal-screen .xterm-rows span { display: inline-block; height: 100%; vertical-align: top; }
+.terminal-screen .xterm-cursor.xterm-cursor-block { color: #12151c; background-color: #fff; }
+.terminal-screen .xterm-cursor.xterm-cursor-block:not(.xterm-cursor-blink) { color: #12151c !important; background-color: #fff !important; }
+.terminal-screen .xterm-cursor.xterm-cursor-outline { outline: 1px solid #fff; outline-offset: -1px; }
+.terminal-screen .xterm-cursor.xterm-cursor-bar { box-shadow: inset 1px 0 #fff; }
+.terminal-screen .xterm-cursor.xterm-cursor-underline { border-bottom: 1px solid #fff; }
+.terminal-screen .xterm-rows.xterm-focus .xterm-cursor-blink.xterm-cursor-block { animation: terminal-cursor-block 1s step-end infinite; }
+.terminal-screen .xterm-rows.xterm-focus .xterm-cursor-blink.xterm-cursor-bar { animation: terminal-cursor-bar 1s step-end infinite; }
+.terminal-screen .xterm-rows.xterm-focus .xterm-cursor-blink.xterm-cursor-underline { animation: terminal-cursor-underline 1s step-end infinite; }
+@keyframes terminal-cursor-block {
+  0% { color: #12151c; background-color: #fff; }
+  50% { color: #fff; background-color: transparent; }
+}
+@keyframes terminal-cursor-bar {
+  50% { box-shadow: none; }
+}
+@keyframes terminal-cursor-underline {
+  50% { border-bottom-color: transparent; }
+}
+.terminal-screen[data-ready="true"] { cursor: text; box-shadow: inset 0 0 0 1px transparent; transition: box-shadow 120ms ease; }
+/* xterm stops blinking the caret when it loses focus, so the frame and the
+   hint below carry the "ready for input" signal instead. */
+.terminal-screen[data-ready="true"][data-focused="true"] { box-shadow: inset 0 0 0 1px #7aa2f7; }
+.terminal-focus-hint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 2; padding: 5px 14px; border: 1px solid #2c3444; border-radius: 999px; color: #cbd5e1; font-size: 12px; line-height: 1.4; background: rgba(24, 29, 39, 0.94); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45); cursor: pointer; }
+.terminal-focus-hint:hover { color: #fff; border-color: #7aa2f7; }
+.terminal-panel:fullscreen { display: flex; flex-direction: column; height: 100%; border: 0; border-radius: 0; background: #12151c; }
+.terminal-panel:fullscreen .terminal-screen { flex: 1; height: auto; min-height: 0; }
+.terminal-login { padding: 16px; border: 1px solid var(--color-border-2); border-radius: 8px; }
+.terminal-login-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.terminal-login-fields > .arco-form-item { min-width: 0; margin-bottom: 0; }
+.terminal-login-field-wide { grid-column: 1 / -1; }
+.terminal-login-actions { align-self: end; }
+.terminal-login-actions .arco-btn { width: 100%; }
+@media (max-width: 640px) {
+  .terminal-login { padding: 12px; }
+  .terminal-login-fields { grid-template-columns: minmax(0, 1fr); }
+  .terminal-toolbar { padding: 8px; }
+  .terminal-screen { padding: 8px; }
+}

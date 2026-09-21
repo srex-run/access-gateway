@@ -1,0 +1,94 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: access-gateway
+  labels:
+    app.kubernetes.io/part-of: access-gateway
+spec:
+  groups:
+    - name: access-gateway.availability
+      rules:
+        - alert: AccessGatewayTargetDown
+          expr: up{job=~".*access-gateway.*"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Access Gateway scrape target is down
+        - alert: AccessGatewayHTTPErrorRateHigh
+          expr: sum(rate(access_gateway_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(access_gateway_http_requests_total[5m])), 0.001) > 0.05
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Access Gateway HTTP 5xx rate exceeds 5 percent
+        - alert: AccessGatewayLatencyHigh
+          expr: histogram_quantile(0.99, sum by (le) (rate(access_gateway_http_request_duration_seconds_bucket[10m]))) > 2
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Access Gateway p99 HTTP latency exceeds two seconds
+        - alert: AccessGatewayWorkerErrors
+          expr: sum by (operation) (increase(access_gateway_worker_operations_total{result="error"}[10m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Access Gateway background worker is failing
+        - alert: AccessGatewayOutboxBacklog
+          expr: access_gateway_outbox_pending > 100 or access_gateway_outbox_oldest_age_seconds > 120
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Access Gateway durable outbox is backlogged
+        - alert: AccessGatewayDatabasePoolSaturated
+          expr: access_gateway_database_connections{state="in_use"} / clamp_min(access_gateway_database_connections{state="max_open"}, 1) > 0.85
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Access Gateway database connection pool is saturated
+        - alert: AccessGatewayDatabaseWaits
+          expr: increase(access_gateway_database_wait{metric="count"}[10m]) > 10
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Access Gateway requests are waiting for database connections
+        - alert: GatewayAgentUnavailable
+          expr: access_gateway_gateway_ready == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: A registered Gateway Agent is unavailable
+        - alert: GatewaySessionNeedsIntervention
+          expr: sum(gateway_agent_managed_sessions{status=~"failed|revoke_failed|manual_intervention"}) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: A gateway session requires operator intervention
+        - alert: GatewaySessionPastTTL
+          expr: gateway_agent_overdue_sessions > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: Gateway Agent TTL processing telemetry is absent
+        - alert: GatewayAuditDeliveryFailing
+          expr: increase(gateway_agent_audit_delivery_attempts_total{result="error"}[10m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Gateway Agent cannot durably deliver connection audit events
+        - alert: GatewayAuditSpoolBacklog
+          expr: gateway_agent_audit_spool_pending > 1000
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Gateway Agent connection audit spool is backlogged

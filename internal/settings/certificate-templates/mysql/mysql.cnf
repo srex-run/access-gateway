@@ -1,0 +1,4 @@
+[mysqld]
+ssl-ca=/etc/mysql/access-gateway-tls/ca.crt
+ssl-cert=/etc/mysql/access-gateway-tls/server.crt
+ssl-key=/etc/mysql/access-gateway-tls/server.key

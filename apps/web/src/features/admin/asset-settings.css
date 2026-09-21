@@ -1,0 +1,12 @@
+.asset-settings { min-width: 0; padding-top: 12px; }
+.asset-settings > section + section { margin-top: 24px; }
+.asset-settings .detail-actions { margin-bottom: 20px; }
+.asset-settings .section-title { flex-wrap: wrap; gap: 8px 16px; margin: 0 0 12px; }
+.asset-settings .section-title > .arco-typography { flex-shrink: 0; }
+.asset-configuration .detail-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 32px; margin: 0; }
+.asset-configuration .detail-list > div { grid-template-columns: 108px minmax(0, 1fr); align-items: center; gap: 12px; padding: 10px 0; font-size: 13px; line-height: 22px; }
+.asset-configuration .detail-list dt { white-space: nowrap; }
+.asset-configuration .detail-list dd { min-width: 0; white-space: normal; }
+@media (max-width: 900px) {
+  .asset-configuration .detail-list { grid-template-columns: minmax(0, 1fr); }
+}

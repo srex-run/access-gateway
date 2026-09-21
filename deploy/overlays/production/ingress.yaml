@@ -1,0 +1,48 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: access-gateway
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: access-gateway.example.invalid
+    nginx.ingress.kubernetes.io/proxy-body-size: 1m
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "5"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "20"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - access-gateway.example.invalid
+      secretName: REPLACE_INGRESS_TLS_SECRET
+  rules:
+    - host: access-gateway.example.invalid
+      http:
+        paths:
+          - path: /internal/gateway
+            pathType: Prefix
+            backend:
+              service:
+                name: access-gateway
+                port:
+                  number: 8080
+          - path: /internal/audit
+            pathType: Prefix
+            backend:
+              service:
+                name: access-gateway
+                port:
+                  number: 8080
+          - path: /callbacks
+            pathType: Prefix
+            backend:
+              service:
+                name: access-gateway
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: access-gateway
+                port:
+                  number: 8080

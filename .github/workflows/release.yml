@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: kuzane/access-gateway
+
+jobs:
+  images:
+    name: Publish access-gateway
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check Docker Hub credentials
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo 'Configure DOCKERHUB_USERNAME and DOCKERHUB_TOKEN in repository Actions secrets.' >&2
+            exit 1
+          fi
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        id: build
+        with:
+          context: .
+          target: access-gateway
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+            ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+      - name: Sign immutable image
+        env:
+          IMAGE: docker.io/${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "$IMAGE@$DIGEST"
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: docker.io/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - name: Record immutable digest
+        env:
+          IMAGE: docker.io/${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: printf '%s@%s\n' "$IMAGE" "$DIGEST" > "access-gateway.digest"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-digest-access-gateway
+          path: access-gateway.digest
+      - name: Publish release digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            gh release create "$RELEASE_VERSION" --verify-tag --generate-notes
+          fi
+          gh release upload "$RELEASE_VERSION" access-gateway.digest --clobber

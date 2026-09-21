@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: access-gateway
+resources:
+  - ../../kubernetes
+  - ingress.yaml
+  - network-policies.yaml
+  - ../../observability
+patches:
+  - path: production-config.yaml
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: NetworkPolicy
+      name: access-gateway|session-agent
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: unused
+images:
+  - name: kuzane/access-gateway
+    newName: kuzane/access-gateway
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000001
+  - name: busybox
+    newName: docker.io/library/busybox
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000005

@@ -1,0 +1,232 @@
+# Linux production: docker compose up -d access-gateway
+# Startup: prepare -> postgres (healthy) -> migrate -> initialize -> application.
+x-runtime-environment: &runtime-environment
+  DATABASE_URL: ""
+  DATABASE_URL_FILE: /run/secrets/access-gateway/database-url
+  ENCRYPTION_KEY: ""
+  ENCRYPTION_KEY_FILE: /run/secrets/access-gateway/encryption-key
+  METRICS_BEARER_TOKEN: ""
+  METRICS_BEARER_TOKEN_FILE: /run/secrets/access-gateway/metrics-bearer-token
+  POSTGRES_PASSWORD: ""
+
+services:
+  prepare:
+    image: ${PREPARE_IMAGE:-busybox:1.37.0}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        set -eu
+        umask 077
+        temporary_file=
+        trap '[ -z "$$temporary_file" ] || rm -f "$$temporary_file"' EXIT
+        fail() { printf '%s\n' "$$1" >&2; exit 1; }
+        read_secret() {
+          [ -f "$$1" ] && [ ! -L "$$1" ] && [ -s "$$1" ] || fail "Invalid secret file: $$1"
+          cat "$$1"
+        }
+        write_secret() {
+          [ ! -L "$$1" ] || fail "Secret file must not be a symlink: $$1"
+          [ ! -e "$$1" ] || [ -f "$$1" ] || fail "Secret path must be a regular file: $$1"
+          temporary_file=$$(mktemp "$$1.XXXXXX")
+          printf '%s\n' "$$2" > "$$temporary_file"
+          chown 65532:65532 "$$temporary_file"
+          chmod 0400 "$$temporary_file"
+          mv -f "$$temporary_file" "$$1"
+          temporary_file=
+        }
+        keep_secret() {
+          if [ -e "$$1" ] || [ -L "$$1" ]; then
+            stored_value=$$(read_secret "$$1")
+            [ -z "$$2" ] || [ "$$2" = "$$stored_value" ] || fail "$$3 differs from its persisted secret; keep the existing value."
+            chown 65532:65532 "$$1"
+            chmod 0400 "$$1"
+          else
+            [ -n "$$2" ] || fail "Configure $$3 in .env before first startup."
+            write_secret "$$1" "$$2"
+          fi
+        }
+        check_length() {
+          [ "$$(printf '%s' "$$1" | wc -c)" -ge 32 ] || fail "$$2 must contain at least 32 bytes."
+        }
+        urlencode() { printf '%s' "$$1" | od -An -v -tx1 | tr -d ' \n' | sed 's/../%&/g'; }
+        secrets=/run/secrets/access-gateway
+        sessions=/var/lib/access-gateway/sessions
+        [ ! -L "$$secrets" ] && [ ! -L "$$sessions" ] || fail 'State directories must not be symlinks.'
+        mkdir -p "$$secrets" "$$sessions"
+        chmod 0700 "$$secrets" "$$sessions"
+        chown 65532:65532 "$$secrets" "$$sessions"
+        [ -z "$$ENCRYPTION_KEY" ] || check_length "$$ENCRYPTION_KEY" ENCRYPTION_KEY
+        keep_secret "$$secrets/encryption-key" "$$ENCRYPTION_KEY" ENCRYPTION_KEY
+        check_length "$$(read_secret "$$secrets/encryption-key")" ENCRYPTION_KEY
+        if [ -z "$$METRICS_BEARER_TOKEN" ] && [ ! -e "$$secrets/metrics-bearer-token" ]; then
+          METRICS_BEARER_TOKEN=$$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+        fi
+        [ -z "$$METRICS_BEARER_TOKEN" ] || check_length "$$METRICS_BEARER_TOKEN" METRICS_BEARER_TOKEN
+        keep_secret "$$secrets/metrics-bearer-token" "$$METRICS_BEARER_TOKEN" METRICS_BEARER_TOKEN
+        check_length "$$(read_secret "$$secrets/metrics-bearer-token")" METRICS_BEARER_TOKEN
+        keep_secret "$$secrets/postgres-password" "$$POSTGRES_PASSWORD" POSTGRES_PASSWORD
+        database_password=$$(read_secret "$$secrets/postgres-password")
+        database_url="postgres://$$(urlencode "$$POSTGRES_USER"):$$(urlencode "$$database_password")@postgres:5432/$$(urlencode "$$POSTGRES_DB")?sslmode=disable"
+        write_secret "$$secrets/database-url" "$$database_url"
+        sync
+        printf '%s\n' 'Configuration and state directories are ready.'
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-access_gateway}
+      POSTGRES_USER: ${POSTGRES_USER:-access_gateway}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
+    network_mode: none
+    volumes:
+      - ${ACCESS_GATEWAY_SECRETS_HOST_PATH:?set ACCESS_GATEWAY_SECRETS_HOST_PATH}:/run/secrets/access-gateway
+      - ${SESSION_AGENT_STATE_HOST_PATH:?set SESSION_AGENT_STATE_HOST_PATH}:/var/lib/access-gateway/sessions
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    restart: "no"
+
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-access_gateway}
+      POSTGRES_USER: ${POSTGRES_USER:-access_gateway}
+      POSTGRES_PASSWORD_FILE: /run/secrets/access-gateway/postgres-password
+    networks:
+      database:
+        ipv4_address: "${POSTGRES_NETWORK_PREFIX:-172.29.0}.10"
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+    volumes:
+      - type: bind
+        source: ${POSTGRES_DATA_HOST_PATH:-./data/postgres}
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: true
+      - ${ACCESS_GATEWAY_SECRETS_HOST_PATH:?set ACCESS_GATEWAY_SECRETS_HOST_PATH}:/run/secrets/access-gateway:ro
+    healthcheck:
+      # Readiness must include authentication over the same bridge address as
+      # migrations. pg_isready and loopback trust rules cannot verify passwords.
+      test:
+        - CMD-SHELL
+        - >-
+          database_password=$$(cat "$${POSTGRES_PASSWORD_FILE}") &&
+          [ -n "$$database_password" ] &&
+          PGPASSWORD="$$database_password" PGCONNECT_TIMEOUT=3
+          psql -X -w -h postgres -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+          -v ON_ERROR_STOP=1 -qAt -c 'SELECT 1' >/dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  migrate:
+    image: ${ACCESS_GATEWAY_IMAGE:?set ACCESS_GATEWAY_IMAGE to the preloaded access-gateway image}
+    entrypoint: ["/usr/local/bin/migrate"]
+    command: ["up"]
+    env_file:
+      - .env
+    environment: *runtime-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      database: {}
+    volumes:
+      - ${ACCESS_GATEWAY_SECRETS_HOST_PATH:?set ACCESS_GATEWAY_SECRETS_HOST_PATH}:/run/secrets/access-gateway:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+  initialize:
+    image: ${ACCESS_GATEWAY_IMAGE:?set ACCESS_GATEWAY_IMAGE to the preloaded access-gateway image}
+    entrypoint: ["/usr/local/bin/account"]
+    command: ["bootstrap"]
+    env_file:
+      - .env
+    environment:
+      <<: *runtime-environment
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
+      BOOTSTRAP_ADMIN_NICKNAME: ${BOOTSTRAP_ADMIN_NICKNAME:-Administrator}
+      BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/access-gateway/initial-admin-password
+    networks:
+      database: {}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ${ACCESS_GATEWAY_SECRETS_HOST_PATH:?set ACCESS_GATEWAY_SECRETS_HOST_PATH}:/run/secrets/access-gateway
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+  access-gateway:
+    image: ${ACCESS_GATEWAY_IMAGE:?set ACCESS_GATEWAY_IMAGE to the preloaded access-gateway image}
+    env_file:
+      - .env
+    environment:
+      <<: *runtime-environment
+      GATEWAY_RUNTIME: docker
+      HTTP_ADDR: "127.0.0.1:${ACCESS_GATEWAY_API_PORT:-8080}"
+      SESSION_AGENT_IMAGE: ${ACCESS_GATEWAY_IMAGE:?set ACCESS_GATEWAY_IMAGE to the preloaded access-gateway image}
+      SESSION_AGENT_STATE_DIR: /var/lib/access-gateway/sessions
+      SESSION_AGENT_DOCKER_STATE_DIR: ${SESSION_AGENT_STATE_HOST_PATH:?set SESSION_AGENT_STATE_HOST_PATH to a private absolute host directory}
+      SESSION_AGENT_DOCKER_SOCKET: /var/run/docker.sock
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL to the public service URL}
+      SESSION_AGENT_CONTROL_PLANE_URL: ${SESSION_AGENT_CONTROL_PLANE_URL:-http://127.0.0.1:${ACCESS_GATEWAY_API_PORT:-8080}}
+      SESSION_AGENT_ALLOW_AUDIT_HTTP: ${SESSION_AGENT_ALLOW_AUDIT_HTTP:-true}
+    # HTTP_ADDR binds directly to the host loopback; Nginx provides public 80/443.
+    # Web-only agents bind loopback only; HTTPS/WSS reaches their mTLS management port.
+    # Enable client access in System Settings to allow new TCP grants (20000-20999).
+    # Host networking needs no "ports" publishing in this Compose.
+    network_mode: host
+    # Session agents share the host network. Resolve the database name to its
+    # bridge address without publishing a PostgreSQL port on the host.
+    extra_hosts:
+      - "postgres:${POSTGRES_NETWORK_PREFIX:-172.29.0}.10"
+    # Match the mounted host socket's numeric GID (stat -Lc '%g' on the host).
+    # Changing group_add requires recreating this container, not just restarting.
+    group_add:
+      - ${DOCKER_SOCKET_GID:?set DOCKER_SOCKET_GID to the Docker socket group ID}
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    volumes:
+      - ${ACCESS_GATEWAY_SECRETS_HOST_PATH:?set ACCESS_GATEWAY_SECRETS_HOST_PATH}:/run/secrets/access-gateway:ro
+      - ${SESSION_AGENT_STATE_HOST_PATH:?set SESSION_AGENT_STATE_HOST_PATH}:/var/lib/access-gateway/sessions
+      - ${DOCKER_SOCKET_HOST_PATH:-/var/run/docker.sock}:/var/run/docker.sock
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 15s
+    restart: unless-stopped
+
+networks:
+  database:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: "${POSTGRES_NETWORK_PREFIX:-172.29.0}.0/24"

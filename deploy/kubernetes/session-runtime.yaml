@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: access-gateway
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: access-gateway-sessions
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "secrets"]
+    verbs: ["get", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "update", "delete"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: access-gateway-sessions
+subjects:
+  - kind: ServiceAccount
+    name: access-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: access-gateway-sessions
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: session-agent
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: session-agent
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: access-gateway
+      ports:
+        - protocol: TCP
+          port: 8090
+    - ports:
+        - protocol: TCP
+          port: 20000
+  egress:
+    - to:
+        - namespaceSelector: {}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0

@@ -1,0 +1,67 @@
+# Optional self-managed database baseline. A managed PostgreSQL service may be
+# used instead when it satisfies the same HA, TLS, backup, and PITR contract.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: access-gateway-postgresql
+  namespace: access-gateway
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.6@sha256:REPLACE_WITH_SCANNED_POSTGRES_IMAGE_DIGEST
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: false
+  bootstrap:
+    initdb:
+      database: access_gateway
+      owner: access_gateway
+      secret:
+        name: access-gateway-postgresql-app
+  storage:
+    size: 100Gi
+    storageClass: REPLACE_WITH_ENCRYPTED_STORAGE_CLASS
+  walStorage:
+    size: 20Gi
+    storageClass: REPLACE_WITH_ENCRYPTED_STORAGE_CLASS
+  postgresql:
+    parameters:
+      ssl_min_protocol_version: TLSv1.3
+      log_connections: "on"
+      log_disconnections: "on"
+      log_lock_waits: "on"
+      shared_preload_libraries: pgaudit
+    pg_hba:
+      - hostssl access_gateway access_gateway 10.0.0.0/8 scram-sha-256
+  backup:
+    retentionPolicy: "180d"
+    barmanObjectStore:
+      destinationPath: s3://REPLACE_WITH_IMMUTABLE_BACKUP_BUCKET/access-gateway
+      endpointURL: https://REPLACE_WITH_OBJECT_STORE_ENDPOINT
+      serverName: access-gateway-postgresql
+      wal:
+        compression: bzip2
+        maxParallel: 4
+      data:
+        compression: bzip2
+        jobs: 4
+      s3Credentials:
+        accessKeyId:
+          name: access-gateway-postgresql-backup
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: access-gateway-postgresql-backup
+          key: ACCESS_SECRET_KEY
+  monitoring:
+    enablePodMonitor: true
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: access-gateway-postgresql-daily
+  namespace: access-gateway
+spec:
+  schedule: "0 0 2 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: access-gateway-postgresql
+  immediate: true
+  method: barmanObjectStore

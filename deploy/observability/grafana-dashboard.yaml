@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: access-gateway-grafana-dashboard
+  labels:
+    grafana_dashboard: "1"
+data:
+  access-gateway.json: |
+    {
+      "annotations": {"list": []},
+      "editable": false,
+      "panels": [
+        {"type":"stat","title":"Gateway availability","gridPos":{"h":6,"w":6,"x":0,"y":0},"targets":[{"expr":"sum(access_gateway_gateway_ready)","refId":"A"}]},
+        {"type":"stat","title":"Running sessions","gridPos":{"h":6,"w":6,"x":6,"y":0},"targets":[{"expr":"sum(gateway_agent_managed_sessions{status=\"running\"})","refId":"A"}]},
+        {"type":"timeseries","title":"HTTP requests","gridPos":{"h":8,"w":12,"x":12,"y":0},"targets":[{"expr":"sum by (status) (rate(access_gateway_http_requests_total[5m]))","legendFormat":"{{status}}","refId":"A"}]},
+        {"type":"timeseries","title":"HTTP p95 latency","gridPos":{"h":8,"w":12,"x":0,"y":8},"targets":[{"expr":"histogram_quantile(0.95, sum by (le) (rate(access_gateway_http_request_duration_seconds_bucket[5m])))","refId":"A"}]},
+        {"type":"timeseries","title":"Worker errors","gridPos":{"h":8,"w":12,"x":12,"y":8},"targets":[{"expr":"sum by (operation) (rate(access_gateway_worker_operations_total{result=\"error\"}[5m]))","legendFormat":"{{operation}}","refId":"A"}]}
+      ],
+      "schemaVersion": 39,
+      "tags": ["access-gateway", "production"],
+      "templating": {"list": []},
+      "time": {"from": "now-6h", "to": "now"},
+      "title": "Access Gateway Production",
+      "uid": "access-gateway-production",
+      "version": 1
+    }

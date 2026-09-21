@@ -1,0 +1,24 @@
+.help-popover-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  appearance: none;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  margin: 0 0 0 6px;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: none;
+  color: var(--color-text-3);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+.help-popover-trigger:hover { color: var(--color-text-2); }
+.help-popover-trigger:focus-visible { outline: 2px solid rgb(var(--primary-6)); outline-offset: 2px; }
+.help-popover-content { max-width: min(400px, calc(100vw - 48px)); line-height: 1.7; }

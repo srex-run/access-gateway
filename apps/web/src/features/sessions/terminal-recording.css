@@ -1,0 +1,7 @@
+.terminal-recording-toolbar { margin-bottom: 12px; }
+.terminal-recording-viewport { padding: 12px; overflow-x: auto; color: #fff; background: #12151c; color-scheme: dark; border-radius: 6px; }
+.terminal-recording-screen { width: max-content; min-width: 100%; }
+.terminal-recording .xterm { padding-bottom: 4px; }
+.session-trace-content { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.session-trace-content > .table-detail-trigger { flex: 1; min-width: 0; }
+.session-trace-content > .arco-btn { flex-shrink: 0; }

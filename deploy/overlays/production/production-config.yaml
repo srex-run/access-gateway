@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: access-gateway-config
+data:
+  ASSET_ENCRYPTION_KEY_ID: "REPLACE_ASSET_KEY_VERSION"
+  ADMIN_USER_IDS: "REPLACE_ADMIN_USER_IDS"
+  SESSION_AGENT_IMAGE: "kuzane/access-gateway@sha256:0000000000000000000000000000000000000000000000000000000000000001"
+  SESSION_AGENT_NODE_NAME: "REPLACE_SESSION_NODE_NAME"
+  PUBLIC_URL: "https://access-gateway.example.invalid"
+  SESSION_AGENT_CONTROL_PLANE_URL: "https://access-gateway.example.invalid"

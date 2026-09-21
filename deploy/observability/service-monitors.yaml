@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: access-gateway
+  labels:
+    app.kubernetes.io/part-of: access-gateway
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: access-gateway
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      authorization:
+        credentials:
+          name: access-gateway-secrets
+          key: metrics-bearer-token

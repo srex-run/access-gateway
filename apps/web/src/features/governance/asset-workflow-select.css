@@ -1,0 +1,6 @@
+.asset-workflow-control { display: flex; align-items: center; gap: 8px; }
+.asset-workflow-control > .arco-select { flex: 1; min-width: 0; }
+.asset-workflow-control > .help-popover-trigger { flex-shrink: 0; }
+.asset-workflow-summary .asset-workflow-control { flex-wrap: nowrap; }
+.asset-workflow-summary .asset-workflow-control > .table-ellipsis { flex: 1; }
+.asset-workflow-summary .asset-workflow-control > .icon-button { flex-shrink: 0; }
