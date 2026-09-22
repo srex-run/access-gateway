@@ -61,6 +61,12 @@ func TestNativeClientArgumentsDoNotContainPasswords(t *testing.T) {
 		}
 	}
 	t.Setenv("PATH", bin)
+	// The runtime image is exercised with /tmp mounted noexec, where
+	// access(X_OK) fails and no stub can be resolved. Argument and
+	// environment construction is covered wherever exec is permitted.
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("temporary directory is not executable: %v", err)
+	}
 	t.Setenv("ENCRYPTION_KEY", "must-not-inherit")
 	t.Setenv("PGHOST", "unapproved-target")
 	t.Setenv("PGCHANNELBINDING", "require")

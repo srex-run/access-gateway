@@ -199,7 +199,11 @@ func nativePromptHandshake(ctx context.Context, conn net.Conn, serverTLS *tls.Co
 	binary.LittleEndian.PutUint16(fields[18:], uint16(caps>>16))
 	fields[20] = 21
 	greeting = append(greeting, fields...)
-	greeting = append(greeting, []byte("abcdefghijkl\x00caching_sha2_password\x00")...)
+	// The 20-byte scramble above is what mysql_native_password expects. Over
+	// TLS a caching_sha2_password client skips the scramble and sends the
+	// password in the clear as an extra packet, which this fixture's
+	// sequence accounting does not model.
+	greeting = append(greeting, []byte("abcdefghijkl\x00mysql_native_password\x00")...)
 	if err := writeNativeMySQLPacket(conn, 0, greeting); err != nil {
 		return nil, err
 	}

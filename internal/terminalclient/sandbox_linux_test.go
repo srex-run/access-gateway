@@ -148,7 +148,11 @@ func TestLinuxClientSeccompRoutesConnectionsAndRejectsBypasses(t *testing.T) {
 	check(unix.SYS_SENDTO, unix.SECCOMP_RET_ERRNO, 5, 1, 1, 0, 1)
 	check(unix.SYS_SENDTO, unix.SECCOMP_RET_ERRNO, 5, 1, 1, 0, 1<<32)
 	check(unix.SYS_TGKILL, unix.SECCOMP_RET_ALLOW, uint64(os.Getpid()), uint64(os.Getpid()), 0)
-	check(unix.SYS_TGKILL, unix.SECCOMP_RET_ERRNO, 1, 1, 0)
+	// The filter allows a thread to signal its own thread group, so the
+	// denied case has to name another one. PID 1 is this process when the
+	// test runs as a container's init.
+	foreign := uint64(os.Getpid()) + 1
+	check(unix.SYS_TGKILL, unix.SECCOMP_RET_ERRNO, foreign, foreign, 0)
 	for _, nr := range []uint32{unix.SYS_IO_URING_SETUP, unix.SYS_SENDMMSG, unix.SYS_BIND, unix.SYS_LISTEN, unix.SYS_ACCEPT, unix.SYS_PTRACE, unix.SYS_PROCESS_VM_READV, unix.SYS_PIDFD_GETFD, unix.SYS_SETNS, unix.SYS_UNSHARE, unix.SYS_SETSID, unix.SYS_SETPGID, unix.SYS_KILL, unix.SYS_RT_SIGQUEUEINFO} {
 		check(nr, unix.SECCOMP_RET_ERRNO)
 	}
