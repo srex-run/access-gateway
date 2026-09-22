@@ -159,8 +159,24 @@ func TestNativeHTTPTerminalAndCancellation(t *testing.T) {
 				// instead of "\r\n" wherever bracketed paste is available, so
 				// anchor this bare command's output to the start of its own line.
 				waitMatch(regexp.MustCompile(`(?:\r|\n)ready-to-interrupt\r\n`))
-				if _, err := writer.Write([]byte{3}); err != nil {
-					t.Fatal(err)
+				// A single interrupt can land in the instant between the marker
+				// and sleep being forked, where the shell has nothing to interrupt
+				// and absorbs it, so press Ctrl-C until the prompt comes back the
+				// way an operator does. Typing the next command before the prompt
+				// returns would lose it: the line discipline discards queued input
+				// when it raises SIGINT.
+				interrupted := len(stream.text())
+				for !strings.Contains(stream.text()[interrupted:], "http> ") {
+					if _, err := writer.Write([]byte{3}); err != nil {
+						t.Fatal(err)
+					}
+					select {
+					case <-time.After(250 * time.Millisecond):
+					case err := <-done:
+						t.Fatalf("native terminal: %v, output=%s", err, stream.text())
+					case <-ctx.Done():
+						t.Fatalf("Ctrl-C did not hand back the prompt: %s", stream.text())
+					}
 				}
 				if _, err := writer.Write([]byte("GET /health\r")); err != nil {
 					t.Fatal(err)

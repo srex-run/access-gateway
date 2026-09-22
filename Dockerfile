@@ -49,6 +49,11 @@ FROM ubuntu:24.04 AS access-gateway
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates mariadb-client postgresql-client redis-tools curl bash libssl3t64 && \
+    # bash is here only for the sandboxed HTTP terminal, whose Landlock policy
+    # does not grant /etc. Leaving the distribution rc file in place would make
+    # every session open with "bash: /etc/bash.bashrc: Permission denied";
+    # removing it lets bash skip the file silently instead.
+    rm -f /etc/bash.bashrc && \
     groupadd --gid 65532 nonroot && \
     useradd --uid 65532 --gid 65532 --no-create-home --home-dir /tmp --shell /usr/sbin/nologin nonroot && \
     rm -rf /var/lib/apt/lists/*

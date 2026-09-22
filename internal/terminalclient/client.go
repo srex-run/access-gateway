@@ -389,6 +389,15 @@ finally { login.password = ''; }
 `
 
 const httpBootstrap = `PS1='http> '
+# The Linux sandbox denies setpgid, so bash's job control hands the terminal
+# to a process group nothing ever joined and Ctrl-C reaches nobody. Without
+# job control every command stays in the shell's own group, which is also the
+# group the supervisor kills on revocation, and the interrupt gets the prompt
+# back. This is unconditional so a shell on a developer's machine behaves the
+# way the deployed one does. A plain 'set +m' cannot work here: bash restores
+# the job-control state it saved before reading this file, so the switch has
+# to be thrown once the first prompt is being drawn.
+PROMPT_COMMAND='set +m'
 HISTFILE=/dev/null
 set +o history
 request() {
