@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # Build static web assets natively, independently of the target image architecture.
-FROM --platform=$BUILDPLATFORM node:22.18.0-alpine3.22 AS web-build
+FROM --platform=$BUILDPLATFORM node:26.3.0-alpine3.22 AS web-build
 WORKDIR /src/apps/web
 COPY apps/web/package.json apps/web/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
