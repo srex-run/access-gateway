@@ -9,7 +9,7 @@ COPY apps/web ./
 RUN npm run build
 
 # Run the Go toolchain natively and cross-compile with TARGETOS/TARGETARCH below.
-FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine3.24@sha256:ce864e7223ac17b1775e6fd0b4c0db580c2eb50e7953a427916379e4b92a1628 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine3.24@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS build
 WORKDIR /src
 RUN apk add --no-cache ca-certificates git
 COPY go.mod go.sum ./
